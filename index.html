@@ -17,25 +17,6 @@
       padding: 10px;
       overflow-y: auto;
     }
-    #main {
-      flex: 1;
-      display: grid;
-      grid-template-rows: 1fr 1fr;
-      grid-template-columns: 1fr 1fr;
-      grid-template-areas:
-        "code program"
-        "console program";
-      gap: 5px;
-      padding: 5px;
-    }
-    .pane {
-      border: 1px solid #aaa;
-      padding: 5px;
-      overflow: auto;
-    }
-    #code { grid-area: code; white-space: pre; background: #fafafa; }
-    #program { grid-area: program; }
-    #console { grid-area: console; background: #111; color: #0f0; white-space: pre; }
     .folder {
       font-weight: bold;
       cursor: pointer;
