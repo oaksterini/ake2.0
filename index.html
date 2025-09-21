@@ -1,1 +1,146 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <title>Mina projekt</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: monospace;
+      display: flex;
+      height: 100vh;
+    }
+    #sidebar {
+      width: 300px;
+      background: #f0f0f0;
+      border-right: 1px solid #ccc;
+      padding: 10px;
+      overflow-y: auto;
+    }
+    #main {
+      flex: 1;
+      display: grid;
+      grid-template-rows: 1fr 1fr;
+      grid-template-columns: 1fr 1fr;
+      grid-template-areas:
+        "code program"
+        "console program";
+      gap: 5px;
+      padding: 5px;
+    }
+    .pane {
+      border: 1px solid #aaa;
+      padding: 5px;
+      overflow: auto;
+    }
+    #code { grid-area: code; white-space: pre; background: #fafafa; }
+    #program { grid-area: program; }
+    #console { grid-area: console; background: #111; color: #0f0; white-space: pre; }
+    .folder {
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 4px;
+    }
+    .file {
+      cursor: pointer;
+      margin-left: 20px;
+    }
+    .nested {
+      margin-left: 15px;
+      display: none;
+    }
+    .active {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div id="sidebar">Laddar projekt...</div>
+  <div id="main">
+    <div id="code" class="pane">← Välj en fil till vänster</div>
+    <div id="program" class="pane">[Programruta]</div>
+    <div id="console" class="pane">[Konsolruta]</div>
+  </div>
+
+  <script>
+    // 🔧 Ändra dessa till ditt eget repo
+    const username = "oaksterini";
+    const repo = "ake";
+    const branch = "main"; // eller "master"
+
+    const sidebar = document.getElementById("sidebar");
+    const codePane = document.getElementById("code");
+    const consolePane = document.getElementById("console");
+
+    // Filer att ignorera
+    const ignoreList = ["CNAME", "index.html"];
+
+    // Hämta repo-trädet från GitHub API
+    async function fetchRepoTree() {
+      const url = `https://api.github.com/repos/${username}/${repo}/git/trees/${branch}?recursive=1`;
+      const res = await fetch(url);
+      const data = await res.json();
+      return data.tree.filter(item => item.type === "blob" && !ignoreList.includes(item.path));
+    }
+
+    // Bygg ett mappträd av filerna
+    function buildTree(paths) {
+      const root = {};
+      paths.forEach(path => {
+        const parts = path.split("/");
+        let current = root;
+        parts.forEach((part, i) => {
+          if (!current[part]) {
+            current[part] = (i === parts.length - 1) ? null : {};
+          }
+          current = current[part];
+        });
+      });
+      return root;
+    }
+
+    // Rendera trädet till sidomenyn
+    function renderTree(tree, parent, path = "") {
+      for (let key in tree) {
+        if (tree[key] === null) {
+          let file = document.createElement("div");
+          file.textContent = key;
+          file.className = "file";
+          file.onclick = () => loadFile(path + "/" + key);
+          parent.appendChild(file);
+        } else {
+          let folder = document.createElement("div");
+          folder.textContent = key;
+          folder.className = "folder";
+          folder.onclick = () => nested.classList.toggle("active");
+          parent.appendChild(folder);
+
+          let nested = document.createElement("div");
+          nested.className = "nested";
+          parent.appendChild(nested);
+
+          renderTree(tree[key], nested, path + "/" + key);
+        }
+      }
+    }
+
+    async function loadFile(path) {
+      const rawUrl = `https://raw.githubusercontent.com/${username}/${repo}/${branch}/${path}`;
+      const res = await fetch(rawUrl);
+      const text = await res.text();
+      codePane.textContent = text;
+      consolePane.textContent = `[Ingen riktig exekvering]\nFil: ${path}\nStorlek: ${text.length} tecken`;
+    }
+
+    // Initiera
+    fetchRepoTree().then(files => {
+      const paths = files.map(f => f.path);
+      const tree = buildTree(paths);
+      sidebar.innerHTML = "<h3>Projektfiler</h3>";
+      renderTree(tree, sidebar, "");
+    });
+  </script>
+</body>
+</html>
+
 
