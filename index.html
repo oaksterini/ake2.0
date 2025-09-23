@@ -31,7 +31,6 @@
   </div>
 
   <script>
-    // ===== KONFIG =====
     const CONFIG = { owner: 'oaksterini', repo: 'ake2.0', branch: 'main' };
     const TOKEN = '';
 
@@ -57,7 +56,6 @@
     function buildNested(tree){
       const root = { children: {} };
       tree.forEach(item=>{
-        // hoppa över index.html och CNAME
         if (item.path.toLowerCase() === 'index.html' || item.path.toLowerCase() === 'cname') return;
         const parts = item.path.split('/');
         let node = root;
