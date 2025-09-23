@@ -4,96 +4,202 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Projektvisare</title>
+  <!--
+    Förklaring:
+    - Scriptet försöker automatiskt lista filer i samma GitHub-repo som sidan ligger i.
+    - Automatisk detektion fungerar för standard GitHub Pages-URLer (user.github.io och user.github.io/repo).
+    - Om du kör sidan på en *custom domain* (t.ex. oakster.se) kan scriptet inte räkna ut owner/repo. I så fall gör någon av följande:
+      1) Lägg till en meta-tag i <head> med namn "github-repo" och innehåll "owner/repo" (ex: <meta name="github-repo" content="oaksterini/ake2.0">)
+      2) Eller öppna detta index.html och fyll i CONFIG.owner och CONFIG.repo i scriptet nedan.
+    - Scriptet hämtar repo-info (default branch) från GitHub och visar filträdet som en utfällbar trädvy. Klicka en fil för att se raw-innehåll.
+  -->
   <style>
-    body { margin:0; font-family: sans-serif; display:flex; height:100vh; }
-    #sidebar { width: 280px; background:#fafafa; border-right:1px solid #ddd; overflow:auto; padding:10px; }
-    #viewer { flex:1; padding:10px; overflow:auto; white-space:pre-wrap; font-family:monospace; font-size:14px; }
-    ul { list-style:none; margin:0; padding-left:16px; }
-    li { cursor:pointer; margin:2px 0; }
-    li.folder::before { content:"▸ "; }
-    li.folder.open::before { content:"▾ "; }
-    li.file { color:#0366d6; }
-    li.file:hover { text-decoration:underline; }
-    .path { font-size:12px; color:#666; margin-bottom:6px; }
+    :root{--bg:#fff;--muted:#666;--accent:#0366d6}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;display:flex;height:100vh;color:#111}
+    #sidebar{width:300px;border-right:1px solid #eee;padding:12px;overflow:auto;background:#fafafa}
+    #viewer{flex:1;padding:12px;overflow:auto}
+    h3{margin:4px 0 12px 0}
+    ul{list-style:none;padding-left:12px;margin:0}
+    li{padding:4px 6px;border-radius:4px}
+    li:hover{color:var(--accent);background:transparent}
+    li.folder::before{content:"▸ ";display:inline-block;margin-right:4px}
+    li.folder.open::before{content:"▾ "}
+    li.file{color:var(--accent);}
+    .path{font-size:13px;color:var(--muted);margin-bottom:8px}
+    pre{white-space:pre-wrap;word-wrap:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Roboto Mono,monospace;font-size:13px;background:#fff;padding:8px;border-radius:6px;border:1px solid #eee}
+    a.small{font-size:13px;color:var(--accent);text-decoration:none}
+    .note{font-size:13px;color:var(--muted)}
   </style>
 </head>
 <body>
   <div id="sidebar">
     <h3>Projektfiler</h3>
+    <div class="note">Utfällbar trädvy — klicka foldrar för att öppna.</div>
     <ul id="tree"></ul>
+    <div class="note" style="margin-top:10px">Behöver du konfigurera? Se kommentar i filens <code>&lt;head&gt;</code>.</div>
   </div>
+
   <div id="viewer">
     <div class="path">Välj en fil till vänster</div>
   </div>
 
   <script>
-    const OWNER = location.hostname.split('.')[0];
-    const REPO = location.pathname.split('/')[1] || '';
-    const BRANCH = 'main';
-    const TOKEN = '';
+    // ======= KONFIGURATION (redigera vid behov) =======
+    // Om autodetektion inte funkar (t.ex. custom domain), fyll i dessa.
+    const CONFIG = { owner: 'oaksterini', repo: 'ake2.0', branch: '' };
+    // Alternativt lägg en meta-tag <meta name="github-repo" content="owner/repo"> i <head> och scriptet använder den.
+    const TOKEN = ''; // valfritt: personal access token för högre rate-limits (Ange bara om du vet vad du gör)
+    // ==================================================
 
-    function apiFetch(url) {
+    const treeEl = document.getElementById('tree');
+    const viewer = document.getElementById('viewer');
+
+    function apiFetch(url){
       const headers = { 'Accept': 'application/vnd.github.v3+json' };
       if (TOKEN) headers['Authorization'] = 'token ' + TOKEN;
-      return fetch(url,{headers}).then(r=>{ if(!r.ok) throw new Error(r.status); return r.json(); });
+      return fetch(url,{headers}).then(r=>{
+        if(!r.ok) throw new Error(r.status + ' ' + r.statusText);
+        return r.json();
+      });
     }
 
-    async function getTree(){
-      const url=`https://api.github.com/repos/${OWNER}/${REPO}/git/trees/${BRANCH}?recursive=1`;
-      const data=await apiFetch(url);
-      return data.tree;
+    function showMsg(msg){ viewer.innerHTML = '<div class="path">' + msg + '</div>'; }
+
+    function detectFromGithubIo(){
+      const host = location.hostname;
+      if (!host.endsWith('.github.io')) return null;
+      const owner = host.split('.')[0];
+      const path = location.pathname.replace(/^\/+|\/+$/g, '');
+      if (!path) return { owner, repo: owner + '.github.io' };
+      const first = path.split('/')[0];
+      return { owner, repo: first };
     }
 
-    function buildTree(tree){
-      const root={children:{}};
+    function detectFromMeta(){
+      const m = document.querySelector('meta[name="github-repo"]');
+      if (!m) return null;
+      const v = (m.getAttribute('content')||'').trim();
+      if (!v) return null;
+      const parts = v.split('/');
+      if (parts.length !== 2) return null;
+      return { owner: parts[0], repo: parts[1] };
+    }
+
+    async function detectRepo(){
+      if (CONFIG.owner && CONFIG.repo) return { owner: CONFIG.owner, repo: CONFIG.repo };
+      const meta = detectFromMeta(); if (meta) return meta;
+      const gh = detectFromGithubIo(); if (gh) return gh;
+      return null;
+    }
+
+    async function getDefaultBranch(owner, repo){
+      try{
+        const info = await apiFetch(`https://api.github.com/repos/${owner}/${repo}`);
+        return info.default_branch || 'main';
+      }catch(e){
+        // swallow, caller handles
+        throw e;
+      }
+    }
+
+    async function getTree(owner, repo, branch){
+      const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`;
+      return apiFetch(url);
+    }
+
+    function buildNested(tree){
+      const root = { children: {} };
       tree.forEach(item=>{
-        const parts=item.path.split('/');
-        let node=root;
+        const parts = item.path.split('/');
+        let node = root;
         parts.forEach((p,i)=>{
-          if(!node.children[p]) node.children[p]={children:{}, type:(i===parts.length-1?item.type:'dir'), path:parts.slice(0,i+1).join('/')};
-          node=node.children[p];
+          if (!node.children[p]) node.children[p] = { children: {}, type: (i===parts.length-1?item.type:'dir'), path: parts.slice(0,i+1).join('/') };
+          node = node.children[p];
         });
       });
       return root;
     }
 
+    function escapeHtml(s){ const map = { '&':'&amp;','<':'&lt;','>':'&gt;' }; return s.replace(/[&<>]/g,c=>map[c]); }
+
     function renderNode(node, parentEl){
       Object.keys(node.children).sort().forEach(name=>{
-        const child=node.children[name];
-        const li=document.createElement('li');
-        li.textContent=name;
-        if(child.type==='dir'){
+        const child = node.children[name];
+        const li = document.createElement('li');
+        li.textContent = name;
+        if (child.type === 'dir'){
           li.classList.add('folder');
-          const ul=document.createElement('ul');
-          ul.style.display='none';
+          const ul = document.createElement('ul');
+          ul.style.display = 'none';
           li.appendChild(ul);
-          li.onclick=(e)=>{
+          li.addEventListener('click', (e)=>{
             e.stopPropagation();
-            const open=li.classList.toggle('open');
-            ul.style.display=open?'block':'none';
-            if(open && !ul.hasChildNodes()) renderNode(child,ul);
-          };
+            const open = li.classList.toggle('open');
+            ul.style.display = open ? 'block' : 'none';
+            if (open && !ul.hasChildNodes()) renderNode(child, ul);
+          });
         } else {
           li.classList.add('file');
-          li.onclick=async(e)=>{
+          li.addEventListener('click', async (e)=>{
             e.stopPropagation();
-            const rawUrl=`https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/${child.path}`;
-            const r=await fetch(rawUrl);
-            const text=await r.text();
-            document.getElementById('viewer').innerHTML=`<div class=\"path\">${child.path} (<a href=\"${rawUrl}\" target=\"_blank\">raw</a>)</div><pre>${text.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</pre>`;
-          };
+            // mark selected
+            Array.from(treeEl.querySelectorAll('li')).forEach(n=>n.classList.remove('selected'));
+            li.classList.add('selected');
+            showMsg('Laddar...');
+            try{
+              const rawUrl = `https://raw.githubusercontent.com/${REPO_INFO.owner}/${REPO_INFO.repo}/${REPO_INFO.branch}/${child.path}`;
+              const r = await fetch(rawUrl);
+              if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+              const text = await r.text();
+              viewer.innerHTML = `<div class="path">${child.path} (<a class=\"small\" href=\"${rawUrl}\" target=\"_blank\">raw</a>)</div><pre></pre>`;
+              const pre = viewer.querySelector('pre');
+              pre.textContent = text;
+            }catch(err){
+              showMsg('Fel: ' + err.message);
+            }
+          });
         }
         parentEl.appendChild(li);
       });
     }
 
-    (async()=>{
+    let REPO_INFO = null;
+
+    (async function main(){
       try{
-        const tree=await getTree();
-        const root=buildTree(tree);
-        renderNode(root,document.getElementById('tree'));
+        const detected = await detectRepo();
+        if (!detected){
+          showMsg('Kunde inte automatiskt hitta repo. Lägg till <meta name="github-repo" content="owner/repo"> eller fyll i CONFIG.owner och CONFIG.repo i scriptet.');
+          return;
+        }
+        const owner = detected.owner;
+        const repo = detected.repo;
+        let branch = CONFIG.branch || '';
+        try{
+          if (!branch) branch = await getDefaultBranch(owner, repo);
+        }catch(e){
+          showMsg('Fel vid hämtning av repo-info: ' + e.message + '. Kontrollera att owner/repo är korrekta och att GitHub API är tillgängligt.');
+          return;
+        }
+
+        REPO_INFO = { owner, repo, branch };
+        // hämta tree
+        let treeData;
+        try{
+          const data = await getTree(owner, repo, branch);
+          if (!data || !data.tree) throw new Error('Ogiltigt tree-respons');
+          treeData = data.tree;
+        }catch(e){
+          showMsg('Fel vid hämtning av filträdet: ' + e.message + '. Kontrollera branch (standard: ' + branch + ') och att repo är offentligt.');
+          return;
+        }
+
+        const nested = buildNested(treeData);
+        renderNode(nested, treeEl);
+        showMsg('Klar — klicka en fil i trädet');
       }catch(err){
-        document.getElementById('viewer').textContent='Fel: '+err.message;
+        showMsg('Oväntat fel: ' + err.message);
       }
     })();
   </script>
