@@ -1,118 +1,128 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="sv">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Projektvisare</title>
+  <meta charset="UTF-8">
+  <title>Projektfiler</title>
   <style>
-    :root{--bg:#fff;--muted:#666;--accent:#0366d6}
-    *{box-sizing:border-box}
-    body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial;display:flex;height:100vh;color:#111}
-    #sidebar{width:300px;border-right:1px solid #eee;padding:12px;overflow:auto;background:#fafafa}
-    #viewer{flex:1;padding:12px;overflow:auto}
-    h3{margin:4px 0 12px 0}
-    ul{list-style:none;padding-left:14px;margin:0}
-    li{padding:3px 4px;border-radius:4px;cursor:pointer}
-    li:hover{color:var(--accent)}
-    li.folder::before{content:"▸ ";display:inline-block;margin-right:4px}
-    li.folder.open::before{content:"▾ "}
-    li.file{color:#111}
-    .path{font-size:13px;color:var(--muted);margin-bottom:8px}
-    pre{white-space:pre-wrap;word-wrap:break-word;font-family:ui-monospace,monospace;font-size:13px;background:#fff;padding:8px;border-radius:6px;border:1px solid #eee}
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      display: flex;
+      height: 100vh;
+    }
+    #sidebar {
+      width: 30%;
+      border-right: 1px solid #ddd;
+      padding: 1rem;
+      overflow-y: auto;
+    }
+    #viewer {
+      flex: 1;
+      padding: 1rem;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      font-family: monospace;
+    }
+    .item {
+      cursor: pointer;
+      padding: 2px 4px;
+    }
+    .item:hover {
+      color: blue;
+    }
+    .folder::before {
+      content: "📁 ";
+    }
+    .file::before {
+      content: "📄 ";
+    }
   </style>
 </head>
 <body>
   <div id="sidebar">
-    <h3>Projektfiler</h3>
-    <ul id="tree"></ul>
+    <h2>Projektfiler</h2>
+    <div id="fileTree"></div>
   </div>
-  <div id="viewer">
-    <div class="path">Välj en fil till vänster</div>
-  </div>
+  <div id="viewer"><i>Klicka på en fil för att visa innehållet här.</i></div>
 
   <script>
-    const CONFIG = { owner: 'oaksterini', repo: 'ake2.0', branch: 'main' };
-    const TOKEN = '';
+    // ---- KONFIG ----
+    const CONFIG = {
+      owner: "oaksterini",
+      repo: "ake2.0",
+      branch: "main"
+    };
 
-    const treeEl = document.getElementById('tree');
-    const viewer = document.getElementById('viewer');
+    const IGNORED = ["index.html", "CNAME"];
 
-    function apiFetch(url){
-      const headers = { 'Accept': 'application/vnd.github.v3+json' };
-      if (TOKEN) headers['Authorization'] = 'token ' + TOKEN;
-      return fetch(url,{headers}).then(r=>{
-        if(!r.ok) throw new Error(r.status);
-        return r.json();
-      });
+    async function fetchContents(path = "") {
+      const url = `https://api.github.com/repos/${CONFIG.owner}/${CONFIG.repo}/contents/${path}?ref=${CONFIG.branch}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Kunde inte hämta " + path);
+      return await res.json();
     }
 
-    function showMsg(msg){ viewer.innerHTML = '<div class="path">' + msg + '</div>'; }
+    function createItem(entry, indent = 0) {
+      const div = document.createElement("div");
+      div.textContent = entry.name;
+      div.classList.add("item");
+      div.style.paddingLeft = (indent * 20) + "px";
 
-    async function getTree(owner, repo, branch){
-      const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`;
-      return apiFetch(url);
-    }
+      if (entry.type === "dir") {
+        div.classList.add("folder");
+        let expanded = false;
+        let childrenContainer;
 
-    function buildNested(tree){
-      const root = { children: {} };
-      tree.forEach(item=>{
-        if (item.path.toLowerCase() === 'index.html' || item.path.toLowerCase() === 'cname') return;
-        const parts = item.path.split('/');
-        let node = root;
-        parts.forEach((p,i)=>{
-          if (!node.children[p]) node.children[p] = { children: {}, type: (i===parts.length-1?item.type:'dir'), path: parts.slice(0,i+1).join('/') };
-          node = node.children[p];
-        });
-      });
-      return root;
-    }
-
-    function renderNode(node, parentEl){
-      Object.keys(node.children).sort().forEach(name=>{
-        const child = node.children[name];
-        const li = document.createElement('li');
-        li.textContent = name;
-        if (child.type === 'dir'){
-          li.classList.add('folder');
-          const ul = document.createElement('ul');
-          ul.style.display = 'none';
-          li.appendChild(ul);
-          li.addEventListener('click', (e)=>{
-            e.stopPropagation();
-            const open = li.classList.toggle('open');
-            ul.style.display = open ? 'block' : 'none';
-            if (open && !ul.hasChildNodes()) renderNode(child, ul);
-          });
-        } else if (child.type === 'blob') {
-          li.classList.add('file');
-          li.addEventListener('click', async (e)=>{
-            e.stopPropagation();
-            showMsg('Laddar...');
-            try{
-              const rawUrl = `https://raw.githubusercontent.com/${CONFIG.owner}/${CONFIG.repo}/${CONFIG.branch}/${child.path}`;
-              const r = await fetch(rawUrl);
-              if (!r.ok) throw new Error(r.status);
-              const text = await r.text();
-              viewer.innerHTML = `<div class=\"path\">${child.path}</div><pre></pre>`;
-              viewer.querySelector('pre').textContent = text;
-            }catch(err){
-              showMsg('Fel: ' + err.message);
+        div.addEventListener("click", async () => {
+          if (expanded) {
+            childrenContainer.remove();
+            expanded = false;
+          } else {
+            try {
+              const contents = await fetchContents(entry.path);
+              childrenContainer = document.createElement("div");
+              contents
+                .filter(c => !IGNORED.includes(c.name))
+                .forEach(c => {
+                  childrenContainer.appendChild(createItem(c, indent + 1));
+                });
+              div.insertAdjacentElement("afterend", childrenContainer);
+              expanded = true;
+            } catch (e) {
+              document.getElementById("viewer").textContent = "Fel: " + e.message;
             }
-          });
-        }
-        parentEl.appendChild(li);
-      });
+          }
+        });
+      } else if (entry.type === "file") {
+        div.classList.add("file");
+        div.addEventListener("click", async () => {
+          try {
+            const res = await fetch(entry.download_url);
+            const text = await res.text();
+            document.getElementById("viewer").textContent = text;
+          } catch (e) {
+            document.getElementById("viewer").textContent = "Fel: " + e.message;
+          }
+        });
+      }
+      return div;
     }
 
-    (async function main(){
-      try{
-        const data = await getTree(CONFIG.owner, CONFIG.repo, CONFIG.branch);
-        const nested = buildNested(data.tree);
-        renderNode(nested, treeEl);
-      }catch(err){
-        showMsg('Fel: ' + err.message);
+    async function buildTree() {
+      try {
+        const root = await fetchContents("");
+        const tree = document.getElementById("fileTree");
+        root
+          .filter(e => !IGNORED.includes(e.name))
+          .forEach(e => {
+            tree.appendChild(createItem(e, 0));
+          });
+      } catch (e) {
+        document.getElementById("viewer").textContent = "Fel: " + e.message;
       }
-    })();
+    }
+
+    buildTree();
   </script>
 </body>
 </html>
