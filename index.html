@@ -1,240 +1,101 @@
-<!--
-Minimal GitHub Projects Viewer
-Single-file static site (index.html)
-
-How to use:
-  1) Edit the config at the top of the <script> section: set OWNER and REPO (and BRANCH if needed), OR open the page with URL query parameters ?owner=USER&repo=REPO
-  2) Put this file in the repository you want to host (or any GitHub Pages site). Enable GitHub Pages (branch: main / docs folder or gh-pages) or push to branch gh-pages.
-  3) Optionally add a GitHub personal access token for higher API rate limits — see commented TOKEN usage below.
-
-Features:
-  - Lists top-level folders (directories) from the repo in a dropdown.
-  - When you pick a folder it lists files inside that folder.
-  - Click a file to view its content in the right-hand viewer which spans ~50% of the screen.
-  - Minimal, barebones, responsive design, no external libraries.
-
-Notes:
-  - Uses the GitHub REST API (unauthenticated requests are rate-limited).
-  - The viewer fetches raw file content using the API's download_url where available.
--->
-
 <!doctype html>
 <html lang="sv">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Projektvisare — GitHub</title>
+  <title>Projektvisare</title>
   <style>
-    :root{--bg:#f7f7f7;--muted:#777;--card:#fff}
-    html,body{height:100%;margin:0;font-family:Inter,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:#111}
-    .wrap{display:flex;gap:20px;height:100vh;padding:20px;box-sizing:border-box}
-    /* left column: controls and file list */
-    .left{width:45%;max-width:720px;background:var(--card);border-radius:12px;padding:18px;box-shadow:0 6px 18px rgba(0,0,0,.06);display:flex;flex-direction:column;gap:12px}
-    .right{flex:1;display:flex;align-items:stretch}
-    .viewer{width:50vw;min-width:360px;height:calc(100vh - 40px);background:var(--card);border-radius:12px;padding:18px;box-shadow:0 6px 18px rgba(0,0,0,.06);overflow:auto}
-
-    h1{margin:0;font-size:18px}
-    label{font-size:13px;color:var(--muted)}
-    select{width:100%;padding:10px;border-radius:8px;border:1px solid #e6e6e6;background:white;font-size:14px}
-    ul{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:6px}
-    li{padding:8px 10px;border-radius:8px;border:1px solid transparent;cursor:pointer}
-    li:hover{background:#f2f4f7}
-    li.selected{background:#eef3ff;border-color:#dbe9ff}
-    .meta{font-size:12px;color:var(--muted)}
-    pre{white-space:pre-wrap;word-wrap:break-word;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;font-size:13px;margin:0}
-    .small{font-size:13px;color:var(--muted)}
-    .row{display:flex;gap:12px;align-items:center}
-    .spacer{flex:1}
-    .note{font-size:12px;color:var(--muted);margin-top:6px}
-    a.btn{padding:8px 12px;border-radius:8px;border:1px solid #e6e6e6;text-decoration:none;color:inherit;background:white}
-    @media (max-width:900px){.wrap{flex-direction:column}.left{width:auto}.viewer{width:auto;height:50vh}}
+    body { margin:0; font-family: sans-serif; display:flex; height:100vh; }
+    #sidebar { width: 280px; background:#fafafa; border-right:1px solid #ddd; overflow:auto; padding:10px; }
+    #viewer { flex:1; padding:10px; overflow:auto; white-space:pre-wrap; font-family:monospace; font-size:14px; }
+    ul { list-style:none; margin:0; padding-left:16px; }
+    li { cursor:pointer; margin:2px 0; }
+    li.folder::before { content:"▸ "; }
+    li.folder.open::before { content:"▾ "; }
+    li.file { color:#0366d6; }
+    li.file:hover { text-decoration:underline; }
+    .path { font-size:12px; color:#666; margin-bottom:6px; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="left">
-      <div class="row">
-        <div>
-          <h1>Projektvisare</h1>
-          <div class="meta">Visa mappar och filer från ett GitHub-repo</div>
-        </div>
-        <div class="spacer"></div>
-        <div class="small">Minimal · Barebones</div>
-      </div>
-
-      <div>
-        <label for="repoInfo">Repo (kan konfigureras i skript eller via URL)</label>
-        <div class="row" style="margin-top:6px;gap:8px">
-          <input id="ownerInput" placeholder="owner" style="padding:8px;border-radius:8px;border:1px solid #e6e6e6" />
-          <input id="repoInput" placeholder="repo" style="padding:8px;border-radius:8px;border:1px solid #e6e6e6" />
-          <button id="loadBtn" class="btn">Ladda</button>
-        </div>
-        <div class="note">Alternativt redigera OWNER och REPO i skriptet.</div>
-      </div>
-
-      <div>
-        <label for="folderSelect">Välj mapp</label>
-        <select id="folderSelect"><option value="">— välj —</option></select>
-      </div>
-
-      <div>
-        <label>Filer i mappen</label>
-        <ul id="fileList"><li class="small">Inget valt</li></ul>
-      </div>
-
-      <div style="margin-top:auto">
-        <div class="meta">Notera: Anrop görs mot GitHub API (enda filstorlek som kan visas beror på GitHub och webbläsaren).</div>
-      </div>
-    </div>
-
-    <div class="right">
-      <div class="viewer" id="viewer">
-        <div class="small">Välj en fil till vänster för att visa dess innehåll.</div>
-      </div>
-    </div>
+  <div id="sidebar">
+    <h3>Projektfiler</h3>
+    <ul id="tree"></ul>
+  </div>
+  <div id="viewer">
+    <div class="path">Välj en fil till vänster</div>
   </div>
 
   <script>
-    // ====== CONFIG ======
-    // Editera dessa värden eller öppna webbsidan med ?owner=USER&repo=REPO
-    const DEFAULT_OWNER = 'oaksterini';
-    const DEFAULT_REPO = 'ake2.0';
-    const DEFAULT_BRANCH = 'main';
+    const OWNER = location.hostname.split('.')[0];
+    const REPO = location.pathname.split('/')[1] || '';
+    const BRANCH = 'main';
+    const TOKEN = '';
 
-    // Om du har en GitHub personal access token (PAT) för att undvika snabba rate-limits,
-    // kan du skapa en token och sätta den här variabeln. **Lämna tom om du inte vill använda token.**
-    // OBS: Dela aldrig token offentligt.
-    const GITHUB_TOKEN = '';
-    // ====================
-
-    const ownerInput = document.getElementById('ownerInput');
-    const repoInput = document.getElementById('repoInput');
-    const loadBtn = document.getElementById('loadBtn');
-    const folderSelect = document.getElementById('folderSelect');
-    const fileList = document.getElementById('fileList');
-    const viewer = document.getElementById('viewer');
-
-    function getFromQuery() {
-      const params = new URLSearchParams(location.search);
-      return {owner: params.get('owner') || '', repo: params.get('repo') || ''};
-    }
-
-    function setBusy(el, busy) {
-      if (busy) el.setAttribute('disabled',''); else el.removeAttribute('disabled');
-    }
-
-    function apiFetch(path) {
-      const url = path;
+    function apiFetch(url) {
       const headers = { 'Accept': 'application/vnd.github.v3+json' };
-      if (GITHUB_TOKEN) headers['Authorization'] = 'token ' + GITHUB_TOKEN;
-      return fetch(url, { headers }).then(r => {
-        if (!r.ok) throw new Error('API error: ' + r.status + ' ' + r.statusText);
-        return r.json();
+      if (TOKEN) headers['Authorization'] = 'token ' + TOKEN;
+      return fetch(url,{headers}).then(r=>{ if(!r.ok) throw new Error(r.status); return r.json(); });
+    }
+
+    async function getTree(){
+      const url=`https://api.github.com/repos/${OWNER}/${REPO}/git/trees/${BRANCH}?recursive=1`;
+      const data=await apiFetch(url);
+      return data.tree;
+    }
+
+    function buildTree(tree){
+      const root={children:{}};
+      tree.forEach(item=>{
+        const parts=item.path.split('/');
+        let node=root;
+        parts.forEach((p,i)=>{
+          if(!node.children[p]) node.children[p]={children:{}, type:(i===parts.length-1?item.type:'dir'), path:parts.slice(0,i+1).join('/')};
+          node=node.children[p];
+        });
+      });
+      return root;
+    }
+
+    function renderNode(node, parentEl){
+      Object.keys(node.children).sort().forEach(name=>{
+        const child=node.children[name];
+        const li=document.createElement('li');
+        li.textContent=name;
+        if(child.type==='dir'){
+          li.classList.add('folder');
+          const ul=document.createElement('ul');
+          ul.style.display='none';
+          li.appendChild(ul);
+          li.onclick=(e)=>{
+            e.stopPropagation();
+            const open=li.classList.toggle('open');
+            ul.style.display=open?'block':'none';
+            if(open && !ul.hasChildNodes()) renderNode(child,ul);
+          };
+        } else {
+          li.classList.add('file');
+          li.onclick=async(e)=>{
+            e.stopPropagation();
+            const rawUrl=`https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/${child.path}`;
+            const r=await fetch(rawUrl);
+            const text=await r.text();
+            document.getElementById('viewer').innerHTML=`<div class=\"path\">${child.path} (<a href=\"${rawUrl}\" target=\"_blank\">raw</a>)</div><pre>${text.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</pre>`;
+          };
+        }
+        parentEl.appendChild(li);
       });
     }
 
-    async function listRootDirs(owner, repo, branch) {
-      const url = `https://api.github.com/repos/${owner}/${repo}/contents?ref=${branch}`;
-      const data = await apiFetch(url);
-      return data.filter(item => item.type === 'dir');
-    }
-
-    async function listFilesInPath(owner, repo, path, branch) {
-      const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}?ref=${branch}`;
-      const data = await apiFetch(url);
-      return data.filter(item => item.type === 'file');
-    }
-
-    async function fetchFileText(download_url) {
-      // raw content url (download_url) can be fetched directly
-      const headers = {};
-      if (GITHUB_TOKEN) headers['Authorization'] = 'token ' + GITHUB_TOKEN;
-      const r = await fetch(download_url, { headers });
-      if (!r.ok) throw new Error('Could not fetch file: ' + r.status);
-      return r.text();
-    }
-
-    function clearChildren(el){ while(el.firstChild) el.removeChild(el.firstChild); }
-
-    async function loadRepo(owner, repo) {
-      folderSelect.innerHTML = '<option>— laddar —</option>';
-      clearChildren(fileList);
-      viewer.innerHTML = '<div class="small">Väntar...</div>';
-      try {
-        const dirs = await listRootDirs(owner, repo, DEFAULT_BRANCH);
-        folderSelect.innerHTML = '<option value="">— välj —</option>' + dirs.map(d => `<option value="${d.path}">${d.name}</option>`).join('');
-        viewer.innerHTML = '<div class="small">Välj en mapp och sedan en fil för att visa innehåll.</div>';
-      } catch (e) {
-        folderSelect.innerHTML = '<option value="">— fel —</option>';
-        clearChildren(fileList);
-        viewer.innerHTML = `<div class="small">Fel: ${e.message}</div>`;
-      }
-    }
-
-    folderSelect.addEventListener('change', async (evt) => {
-      const val = evt.target.value;
-      clearChildren(fileList);
-      viewer.innerHTML = '<div class="small">Laddar filer...</div>';
-      if (!val) { viewer.innerHTML = '<div class="small">Välj en mapp.</div>'; return; }
-      try {
-        const files = await listFilesInPath(ownerInput.value.trim(), repoInput.value.trim(), val, DEFAULT_BRANCH);
-        if (!files.length) {
-          fileList.innerHTML = '<li class="small">Inga filer i denna mappen</li>';
-          viewer.innerHTML = '<div class="small">Ingen fil att visa.</div>';
-          return;
-        }
-        files.forEach(f => {
-          const li = document.createElement('li');
-          li.textContent = f.name;
-          li.title = f.path;
-          li.addEventListener('click', async () => {
-            Array.from(fileList.children).forEach(c => c.classList.remove('selected'));
-            li.classList.add('selected');
-            viewer.innerHTML = '<div class="small">Laddar fil...</div>';
-            try {
-              const text = await fetchFileText(f.download_url);
-              const ext = f.name.split('.').pop().toLowerCase();
-              const pre = document.createElement('pre');
-              pre.innerText = text;
-              viewer.innerHTML = '';
-              const info = document.createElement('div');
-              info.className = 'row';
-              info.style.marginBottom = '8px';
-              info.innerHTML = `<div class="small">${f.path}</div><div class="spacer"></div><a class="btn" href="${f.download_url}" target="_blank">Öppna raw</a>`;
-              viewer.appendChild(info);
-              viewer.appendChild(pre);
-            } catch (err) {
-              viewer.innerHTML = `<div class="small">Fel: ${err.message}</div>`;
-            }
-          });
-          fileList.appendChild(li);
-        });
-        viewer.innerHTML = '<div class="small">Klicka en fil för att visa innehåll.</div>';
-      } catch (err) {
-        fileList.innerHTML = `<li class="small">Fel: ${err.message}</li>`;
-        viewer.innerHTML = `<div class="small">Fel: ${err.message}</div>`;
-      }
-    });
-
-    loadBtn.addEventListener('click', () => {
-      const o = ownerInput.value.trim();
-      const r = repoInput.value.trim();
-      if (!o || !r) { alert('Fyll i owner och repo.'); return; }
-      loadRepo(o, r);
-    });
-
-    // on load: set inputs from config or query
-    (function init(){
-      const q = getFromQuery();
-      ownerInput.value = q.owner || DEFAULT_OWNER;
-      repoInput.value = q.repo || DEFAULT_REPO;
-      if (ownerInput.value && repoInput.value) {
-        setTimeout(() => loadRepo(ownerInput.value, repoInput.value), 100);
-      } else {
-        viewer.innerHTML = '<div class="small">Ange owner och repo ovan eller lägg till ?owner=USER&repo=REPO i URL:en</div>';
+    (async()=>{
+      try{
+        const tree=await getTree();
+        const root=buildTree(tree);
+        renderNode(root,document.getElementById('tree'));
+      }catch(err){
+        document.getElementById('viewer').textContent='Fel: '+err.message;
       }
     })();
   </script>
 </body>
 </html>
-
